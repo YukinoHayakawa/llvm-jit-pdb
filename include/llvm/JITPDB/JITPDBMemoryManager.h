@@ -50,6 +50,7 @@ public:
 
   Status getStatus() const { return StatusValue; }
 
+  JITSymbol findSymbol(const std::string &Name) override;
 protected:
   uint8_t *allocateCodeSection(uintptr_t Size, unsigned Alignment,
                                unsigned SectionID,

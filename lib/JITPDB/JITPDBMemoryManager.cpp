@@ -10,6 +10,7 @@
 #include <llvm/Object/COFF.h>
 #include <llvm/Support/FileSystem.h>
 #pragma warning(pop)
+#include <iostream>
 #include <windows.h>
 
 namespace {
@@ -216,7 +217,8 @@ void JITPDBMemoryManager::createDll() {
         FILE *DllTplFile = fopen(DllTplPath.c_str(), "rb");
         if (DllTplFile == nullptr) {
           LLVM_JIT_PDB_LOG(Error, "cannot find %s", DllTplPath.c_str());
-          return;
+          fclose(DllFile);
+          break;
         }
         fseek(DllTplFile, 0, SEEK_END);
         size_t S = ftell(DllTplFile);
@@ -231,6 +233,7 @@ void JITPDBMemoryManager::createDll() {
       break;
     }
   }
+  assert(DllFile);
 }
 
 #define LLVM_JIT_PDB_STRING_AS_PRINTF_ARG(str) int(str.size()), str.data()
@@ -285,7 +288,11 @@ void JITPDBMemoryManager::reloadDll() {
 
   // hack dll content
 #pragma warning(disable : 4996)
-  FILE *dllFD = fopen(DllPath.c_str(), "rb+");
+  FILE *dllFD = 0;
+  do {
+      dllFD = fopen(DllPath.c_str(), "rb+");
+  } while(!dllFD);
+  // if(!dllFD) printf("%d\n", errno);
 #pragma warning(default : 4996)
   assert(dllFD);
 
@@ -296,10 +303,10 @@ void JITPDBMemoryManager::reloadDll() {
   fwrite(&currTime, 4, 1, dllFD);
 
   // make the memory only readable
-  uint8_t writeHack = 0x60;
-  fseek(dllFD, DllHackInfoData.SectionInfos[DllHackInfo::TEXT].HeaderPos + 39,
-        0);
-  fwrite(&writeHack, 1, 1, dllFD);
+  // uint8_t writeHack = 0x60;
+  // fseek(dllFD, DllHackInfoData.SectionInfos[DllHackInfo::TEXT].HeaderPos + 39,
+  //       0);
+  // fwrite(&writeHack, 1, 1, dllFD);
 
   ULONG_PTR imageBase =
       (ULONG_PTR)backupMem -
@@ -425,10 +432,22 @@ void JITPDBMemoryManager::unloadDll() {
   assert(res);
 }
 
+JITSymbol JITPDBMemoryManager::findSymbol(const std::string &Name)
+{
+    auto addr = getSymbolAddress(Name);
+    if(addr == 0)
+    {
+        std::cout << "missing symbol: " << Name << std::endl;
+        addr = -1;
+    }
+    return JITSymbol(addr, JITSymbolFlags::Exported);
+}
+
 uint8_t *JITPDBMemoryManager::allocateCodeSection(uintptr_t Size,
                                                   unsigned Alignment,
                                                   unsigned SectionID,
                                                   StringRef SectionName) {
+    std::cout << "code section: " << SectionName.data() << std::endl;
   return CodeSection.allocate(this, Size, Alignment);
 }
 
@@ -437,7 +456,8 @@ uint8_t *JITPDBMemoryManager::allocateDataSection(uintptr_t Size,
                                                   unsigned SectionID,
                                                   StringRef SectionName,
                                                   bool IsReadOnly) {
-  uint8_t *mem;
+    std::cout << "data section: " << SectionName.data()  << " ro=" << IsReadOnly << std::endl;
+    uint8_t *mem;
   if (IsReadOnly)
     mem = DataRSection.allocate(this, Size, Alignment);
   else
@@ -497,7 +517,7 @@ bool JITPDBMemoryManager::finalizeMemory(std::string *ErrMsg) {
     StatusValue = Status::MemoryNotReady;
     return true;
   } else {
-    NotifyModuleEmitted(DllBaseAddress);
+    if(NotifyModuleEmitted) NotifyModuleEmitted(DllBaseAddress);
     StatusValue = Status::OK;
     return false;
   }

@@ -9,6 +9,7 @@
 
 #pragma warning(push, 0)
 
+#include <iostream>
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/ADT/BitVector.h>
 #include <llvm/DebugInfo/CodeView/DebugFrameDataSubsection.h>
@@ -256,7 +257,7 @@ void addCommonLinkerModuleSymbols(StringRef PdbPath,
   EBS.Fields.push_back("exe");
   char buffer[MAX_PATH];
   GetModuleFileNameA(NULL, buffer, MAX_PATH);
-  SmallString<64> exe = buffer;
+  SmallString<64> exe { StringRef(buffer) };
   EBS.Fields.push_back(exe);
   EBS.Fields.push_back("pdb");
   EBS.Fields.push_back(PdbPath);
@@ -472,10 +473,11 @@ void InsertObjFileSectionHeaders(object::COFFObjectFile const &ObjFile,
       SectionName = *E;
     } else
       continue;
+    std::cout << "Obj Section: " << SectionName.data() << std::endl;
     auto sec = ObjFile.getCOFFSection(Section);
-    if (".debug$S" == SectionName) {
+    if (".debug$S" == SectionName) { // basically does nothing
       DebugSIndexSection = AllSections.size();
-    } else if (".debug$T" == SectionName) {
+    } else if (".debug$T" == SectionName) { // nop
       ArrayRef<uint8_t> Contents;
       ObjFile.getSectionContents(sec, Contents);
       Contents = consumeDebugMagic(Contents, SectionName);
@@ -872,7 +874,14 @@ void MergeDebugT(ArrayRef<uint8_t> Data, CVIndexMap *ObjectIndexMap,
 PublicSym32 createPublic(object::COFFObjectFile const &File,
                          object::COFFSymbolRef Sym) {
   PublicSym32 Pub(SymbolKind::S_PUB32);
-  Pub.Name = *File.getSymbolName(Sym);
+  auto n = File.getSymbolName(Sym);
+  if(!n)
+  {
+      std::cout << errorToErrorCode(n.takeError()).message() << std::endl;
+      return {};
+  }
+  Pub.Name = *n;
+  std::cout << "pubsymbol: " << Pub.Name.data() << std::endl;
   if (Sym.isFunctionDefinition())
     Pub.Flags = PublicSymFlags::Function;
 
@@ -912,9 +921,17 @@ void InsertObjFileSections(
   for (size_t i = 0; i < ObjFile.getNumberOfSymbols(); ++i) {
     object::COFFSymbolRef Sym = *ObjFile.getSymbol(i);
     if (!Sym.isAnyUndefined())
-      Publics.push_back(createPublic(ObjFile, Sym));
+    {
+        auto pub = createPublic(ObjFile, Sym);
+        if(pub.Name.data())
+        Publics.push_back(pub);
+    }
   }
-
+  for(const object::SectionRef &s : ObjFile.sections())
+  {
+      auto name = s.getName();
+      std::cout << "Section in obj: " << name.get().data() << std::endl;
+  }
   bool DebugInfoMissing = false;
   bool DebugLinesMissing = true;
   const object::coff_section *S = nullptr;
